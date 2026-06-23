@@ -25,6 +25,12 @@ function toast(msg) {
 }
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'f-' + Math.random().toString(36).slice(2) + Date.now());
 
+function enableLinksBtn(docId) {
+  const b = document.getElementById('linksBtn');
+  b.disabled = false;
+  b.onclick = () => { location.href = `/links.html?doc=${docId}`; };
+}
+
 // ---------------------------------------------------------------------------
 // 저장소 배지
 // ---------------------------------------------------------------------------
@@ -75,6 +81,7 @@ async function handleUpload(file) {
       `업로드 완료 · 문서ID <code>${data.id.slice(0, 8)}</code><br>링크 복원: <a href="?doc=${data.id}">?doc=${data.id.slice(0,8)}</a>`;
     document.getElementById('saveBtn').disabled = false;
     history.replaceState(null, '', `?doc=${data.id}`);
+    enableLinksBtn(data.id);
     await renderPdf(`/api/documents/${data.id}/pdf`);
     refreshFieldList();
     toast('PDF 업로드 완료');
@@ -409,6 +416,7 @@ async function restoreFromQuery() {
     state.docId = id;
     document.getElementById('docTitle').value = data.document.title || '';
     document.getElementById('saveBtn').disabled = false;
+    enableLinksBtn(id);
     document.getElementById('uploadInfo').innerHTML = `복원됨 · <code>${id.slice(0, 8)}</code>`;
     await renderPdf(`/api/documents/${id}/pdf`);
     state.fields = (data.fields || []).map(f => ({
