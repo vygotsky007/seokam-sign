@@ -1,0 +1,22 @@
+{
+  "name": "seokam-sign",
+  "version": "0.1.0",
+  "description": "석암 전자서명 - PDF 업로드 + 필드 영역 지정 (1단계)",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^2.2.0"
+  },
+  "author": "vygotsky007",
+  "license": "MIT"
+}

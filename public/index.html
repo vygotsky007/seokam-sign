@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>석암 전자서명 · 문서 만들기</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">✍️</span>
+      <div>
+        <div class="brand-title">석암 전자서명</div>
+        <div class="brand-sub">문서 만들기 · 필드 지정</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <input id="docTitle" class="title-input" type="text" placeholder="문서 제목 (예: 현장체험학습 참가 동의서)" />
+      <span id="storeBadge" class="store-badge">…</span>
+      <button id="saveBtn" class="btn btn-primary" disabled>저장</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- 좌측 패널 -->
+    <aside class="sidebar">
+      <section class="panel">
+        <h3>1. PDF 불러오기</h3>
+        <div id="dropZone" class="dropzone">
+          <div class="dz-icon">📄</div>
+          <p>PDF를 끌어다 놓거나<br /><label class="link" for="fileInput">파일 선택</label></p>
+          <input id="fileInput" type="file" accept="application/pdf" hidden />
+        </div>
+        <div id="uploadInfo" class="hint"></div>
+      </section>
+
+      <section class="panel">
+        <h3>2. 필드 추가</h3>
+        <p class="hint">버튼을 누른 뒤 페이지 위에서 드래그하면 영역이 생깁니다.</p>
+        <div class="palette">
+          <button class="tool" data-type="text">🅰️ 텍스트</button>
+          <button class="tool" data-type="confirm">✏️ 따라쓰기</button>
+          <button class="tool" data-type="checkbox">☑️ 동의 체크</button>
+          <button class="tool" data-type="signature">🖊️ 손글씨 서명</button>
+        </div>
+        <button id="selectMode" class="tool tool-wide active">🖱️ 선택/이동</button>
+        <p class="legend"><span class="swatch req"></span> 빨강 = 필수 &nbsp; <span class="swatch opt"></span> 선택</p>
+      </section>
+
+      <section class="panel">
+        <h3>3. 필드 목록 <span id="fieldCount" class="count">0</span></h3>
+        <ul id="fieldList" class="field-list"></ul>
+      </section>
+    </aside>
+
+    <!-- 우측: PDF 페이지 -->
+    <section class="stage" id="stage">
+      <div id="empty" class="empty">왼쪽에서 PDF를 먼저 불러오세요.</div>
+      <div id="pages" class="pages"></div>
+    </section>
+  </main>
+
+  <!-- 필드 편집 팝오버 -->
+  <div id="editor" class="editor hidden">
+    <div class="editor-row">
+      <label>라벨</label>
+      <input id="edLabel" type="text" placeholder="예: 보호자 성명" />
+    </div>
+    <div class="editor-row" id="edAnswerRow" style="display:none">
+      <label id="edAnswerLabel">정답 문구</label>
+      <input id="edAnswer" type="text" placeholder="" />
+    </div>
+    <div class="editor-row check">
+      <label><input id="edRequired" type="checkbox" /> 필수 (빨강)</label>
+    </div>
+    <div class="editor-actions">
+      <button id="edDelete" class="btn btn-danger">삭제</button>
+      <button id="edClose" class="btn">닫기</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    if (window['pdfjsLib']) {
+      window['pdfjsLib'].GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
+  <script src="/app.js"></script>
+</body>
+</html>
