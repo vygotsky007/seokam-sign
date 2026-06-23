@@ -32,6 +32,10 @@ async function init() {
     state.values = data.values || {};
     document.getElementById('title').textContent = data.title || '동의서';
     document.getElementById('deadline').textContent = '제출 마감 ' + fmtDate(data.expires_at);
+    if (data.memo && data.memo.trim()) {
+      const m = document.getElementById('memoBox');
+      if (m) { m.textContent = data.memo; m.classList.remove('hidden'); }
+    }
     if (data.has_response) document.getElementById('redo').classList.remove('hidden');
     document.getElementById('app').classList.remove('hidden');
     document.getElementById('bar').classList.remove('hidden');
@@ -84,9 +88,12 @@ async function renderPdf() {
 }
 
 // ---- 작성 폼 ----
+function todayStr() { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
+
 function renderForm() {
   const box = document.getElementById('form');
   box.innerHTML = '';
+  const renderedGroups = new Set();
   state.fields.forEach((f, i) => {
     const wrap = document.createElement('div'); wrap.className = 'field';
     const star = f.required ? '<span class="star">*</span> ' : '';
@@ -110,9 +117,37 @@ function renderForm() {
       wrap.innerHTML = `<label class="chk"><input type="checkbox" data-id="${f.id}" ${checked}/> <span>${star}${esc(f.label)}</span></label>`;
       wrap.querySelector('input').addEventListener('change', e => { state.values[f.id] = e.target.checked; revalidate(); });
 
+    } else if (f.type === 'date') {
+      if (f.answer === 'manual') {
+        wrap.innerHTML = label + `<input type="date" data-id="${f.id}" value="${esc(state.values[f.id] || '')}" />`;
+        wrap.querySelector('input').addEventListener('change', e => { state.values[f.id] = e.target.value; revalidate(); });
+      } else {
+        if (!state.values[f.id]) state.values[f.id] = todayStr();
+        wrap.innerHTML = label + `<input type="text" readonly value="${esc(state.values[f.id])}" style="background:#f3f6fb" /><div class="match no">제출일이 자동으로 입력됩니다</div>`;
+      }
+
+    } else if (f.type === 'radio') {
+      if (renderedGroups.has(f.grp || f.id)) return;
+      renderedGroups.add(f.grp || f.id);
+      const opts = state.fields.filter(x => x.type === 'radio' && (x.grp || x.id) === (f.grp || f.id));
+      const reqGrp = opts.some(o => o.required);
+      const gstar = reqGrp ? '<span class="star">*</span> ' : '';
+      const gname = f.grp || f.label;
+      let html = `<div class="flabel"><span class="n">${i + 1}</span> ${gstar}${esc(gname)}</div><div class="radio-row">`;
+      opts.forEach(o => {
+        const sel = state.values[f.grp] === o.id ? 'checked' : '';
+        html += `<label class="radio-opt"><input type="radio" name="g_${esc(f.grp || f.id)}" data-grp="${esc(f.grp || '')}" data-oid="${o.id}" ${sel}/> <span>${esc(o.label)}</span></label>`;
+      });
+      html += `</div>`;
+      wrap.innerHTML = html;
+      wrap.querySelectorAll('input[type=radio]').forEach(r => {
+        r.addEventListener('change', e => { state.values[e.target.dataset.grp] = e.target.dataset.oid; revalidate(); });
+      });
+
     } else if (f.type === 'signature') {
       wrap.innerHTML = label +
         `<div class="sigbox"><canvas data-id="${f.id}"></canvas>` +
+        `<button type="button" class="reuse" data-reuse="${f.id}" style="display:none">이전 서명 사용</button>` +
         `<button type="button" class="clr" data-clr="${f.id}">지우기</button>` +
         `<div class="ph" data-ph="${f.id}">여기에 손가락으로 서명</div></div>`;
       box.appendChild(wrap);
@@ -153,7 +188,7 @@ function setupSignature(f, wrap) {
   const cssW = rect.width || 360, cssH = 150;
   canvas.width = Math.floor(cssW * dpr); canvas.height = Math.floor(cssH * dpr);
   const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
-  ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1a2230';
+  ctx.lineWidth = 3.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#15203a';
   const pad = { canvas, ctx, dpr, drawing: false, dirty: false, last: null };
   state.sigPads[f.id] = pad;
 
@@ -169,7 +204,14 @@ function setupSignature(f, wrap) {
     ctx.beginPath(); ctx.moveTo(pad.last.x, pad.last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
     pad.last = p; pad.dirty = true;
   };
-  const end = () => { if (pad.drawing) { pad.drawing = false; revalidate(); } };
+  const end = () => {
+    if (pad.drawing) {
+      pad.drawing = false;
+      // 방금 그린 서명을 이 화면 안에서 재사용할 수 있도록 보관
+      if (pad.dirty) { state.lastSig = pad.canvas.toDataURL('image/png'); updateReuseButtons(); }
+      revalidate();
+    }
+  };
 
   canvas.addEventListener('pointerdown', start);
   canvas.addEventListener('pointermove', move);
@@ -178,7 +220,30 @@ function setupSignature(f, wrap) {
 
   wrap.querySelector(`[data-clr="${f.id}"]`).addEventListener('click', () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height); pad.dirty = false;
-    showPh(f.id); revalidate();
+    showPh(f.id); updateReuseButtons(); revalidate();
+  });
+
+  // 이전 서명 사용
+  wrap.querySelector(`[data-reuse="${f.id}"]`).addEventListener('click', () => {
+    if (!state.lastSig) return;
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width / pad.dpr, canvas.height / pad.dpr);
+      pad.dirty = true; hidePh(f.id); updateReuseButtons(); revalidate();
+    };
+    img.src = state.lastSig;
+  });
+}
+
+// 비어있는 서명칸에만 "이전 서명 사용" 버튼 노출
+function updateReuseButtons() {
+  state.fields.filter(f => f.type === 'signature').forEach(f => {
+    const btn = document.querySelector(`[data-reuse="${f.id}"]`);
+    if (!btn) return;
+    const pad = state.sigPads[f.id];
+    const empty = !(pad && pad.dirty);
+    btn.style.display = (state.lastSig && empty) ? 'block' : 'none';
   });
 }
 function hidePh(id) { const e = document.querySelector(`[data-ph="${id}"]`); if (e) e.style.display = 'none'; }
@@ -202,8 +267,15 @@ function isFilled(f) {
   if (f.type === 'text') return !!(state.values[f.id] || '').toString().trim();
   if (f.type === 'confirm') return normalize(state.values[f.id]) === normalize(f.answer) && !!(state.values[f.id] || '').trim();
   if (f.type === 'checkbox') return state.values[f.id] === true;
+  if (f.type === 'date') return !!(state.values[f.id] || '').toString().trim();
+  if (f.type === 'radio') return state.values[f.grp] === f.id || groupSatisfied(f);
   if (f.type === 'signature') { const p = state.sigPads[f.id]; return !!(p && p.dirty); }
   return true;
+}
+// 라디오는 그룹 단위: 그룹에 하나라도 선택되면 그룹의 모든 필수 라디오가 충족된 것으로 봄
+function groupSatisfied(f) {
+  if (f.type !== 'radio') return false;
+  return !!state.values[f.grp] && state.fields.some(x => x.type === 'radio' && x.grp === f.grp && x.id === state.values[f.grp]);
 }
 function revalidate() {
   const ok = state.fields.filter(f => f.required).every(isFilled);
@@ -218,7 +290,13 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
   const signatures = {};
   state.fields.filter(f => f.type === 'signature').forEach(f => { const d = exportSig(f); if (d) signatures[f.id] = d; });
   const values = {};
-  state.fields.forEach(f => { if (f.type !== 'signature' && state.values[f.id] != null) values[f.id] = state.values[f.id]; });
+  state.fields.forEach(f => { if (f.type !== 'signature' && f.type !== 'radio' && state.values[f.id] != null) values[f.id] = state.values[f.id]; });
+  // 라디오 그룹 선택값
+  const grpsDone = new Set();
+  state.fields.filter(f => f.type === 'radio' && f.grp).forEach(f => {
+    if (grpsDone.has(f.grp)) return; grpsDone.add(f.grp);
+    if (state.values[f.grp] != null) values[f.grp] = state.values[f.grp];
+  });
 
   try {
     const res = await fetch(`/api/f/${TOKEN}`, {

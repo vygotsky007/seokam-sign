@@ -5,6 +5,8 @@ const TYPE_META = {
   confirm:   { ko: '따라쓰기',   short: '따라',    answer: '정답 문구(학부모가 똑같이 따라 씀)' },
   checkbox:  { ko: '동의 체크',  short: '체크',    answer: '동의 문구(체크 옆 표시)' },
   signature: { ko: '손글씨 서명', short: '서명',   answer: false },
+  date:      { ko: '날짜',       short: '날짜',    answer: false },
+  radio:     { ko: '예/아니요',  short: '선택',    answer: false },
 };
 
 const state = {
@@ -198,7 +200,8 @@ function attachPlacement(overlay, pageIdx) {
         type: state.tool,
         label: defaultLabel(state.tool),
         required: true,
-        answer: TYPE_META[state.tool].answer ? '' : null,
+        answer: state.tool === 'date' ? 'auto' : (TYPE_META[state.tool].answer ? '' : null),
+        grp: state.tool === 'radio' ? (state.lastGrp || '선택1') : null,
       };
       state.fields.push(field);
       renderAllFields();
@@ -213,7 +216,7 @@ function attachPlacement(overlay, pageIdx) {
 }
 
 function defaultLabel(type) {
-  return { text: '텍스트 입력', confirm: '따라쓰기', checkbox: '동의합니다', signature: '서명' }[type] || '필드';
+  return { text: '텍스트 입력', confirm: '따라쓰기', checkbox: '동의합니다', signature: '서명', date: '날짜', radio: '예' }[type] || '필드';
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +237,7 @@ function renderField(f) {
 
   const label = document.createElement('div');
   label.className = 'fb-label';
-  label.textContent = `${f.label} · ${TYPE_META[f.type].short}`;
+  label.textContent = `${f.label} · ${TYPE_META[f.type].short}` + (f.type === 'radio' && f.grp ? ` [${f.grp}]` : '');
   box.appendChild(label);
 
   const typeTag = document.createElement('div');
@@ -325,6 +328,17 @@ function openEditor(id) {
     document.getElementById('edAnswerLabel').textContent = meta.answer;
     document.getElementById('edAnswer').value = f.answer || '';
   } else aRow.style.display = 'none';
+
+  // 날짜 입력 방식
+  const dRow = document.getElementById('edDateRow');
+  if (f.type === 'date') { dRow.style.display = ''; document.getElementById('edDateMode').value = f.answer || 'auto'; }
+  else dRow.style.display = 'none';
+
+  // 라디오 그룹
+  const gRow = document.getElementById('edGrpRow');
+  if (f.type === 'radio') { gRow.style.display = ''; document.getElementById('edGrp').value = f.grp || ''; }
+  else gRow.style.display = 'none';
+
   document.getElementById('edRequired').checked = !!f.required;
 
   // 위치: 박스 근처
@@ -348,6 +362,12 @@ document.getElementById('edLabel').addEventListener('input', e => {
 });
 document.getElementById('edAnswer').addEventListener('input', e => {
   const f = cur(); if (f) f.answer = e.target.value;
+});
+document.getElementById('edDateMode').addEventListener('change', e => {
+  const f = cur(); if (f) f.answer = e.target.value;
+});
+document.getElementById('edGrp').addEventListener('input', e => {
+  const f = cur(); if (f) { f.grp = e.target.value; state.lastGrp = e.target.value; renderAllFields(); refreshFieldList(); }
 });
 document.getElementById('edRequired').addEventListener('change', e => {
   const f = cur(); if (f) { f.required = e.target.checked; renderAllFields(); refreshFieldList(); }
@@ -389,7 +409,7 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     fields: state.fields.map((f, i) => ({
       id: f.id, page: f.page, x: f.x, y: f.y, w: f.w, h: f.h,
       type: f.type, label: f.label, required: f.required,
-      answer: f.answer, sort: i,
+      answer: f.answer, grp: f.grp || null, sort: i,
     })),
   };
   try {
@@ -399,6 +419,11 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '저장 실패');
+    // 남길 말 저장
+    await fetch(`/api/documents/${state.docId}/meta`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo: document.getElementById('memo').value }),
+    });
     toast(`저장 완료 · 필드 ${data.count}개`);
   } catch (e) { toast('오류: ' + e.message); }
 });
@@ -415,13 +440,14 @@ async function restoreFromQuery() {
     if (!res.ok) throw new Error(data.error || '복원 실패');
     state.docId = id;
     document.getElementById('docTitle').value = data.document.title || '';
+    document.getElementById('memo').value = data.document.memo || '';
     document.getElementById('saveBtn').disabled = false;
     enableLinksBtn(id);
     document.getElementById('uploadInfo').innerHTML = `복원됨 · <code>${id.slice(0, 8)}</code>`;
     await renderPdf(`/api/documents/${id}/pdf`);
     state.fields = (data.fields || []).map(f => ({
       id: f.id, page: f.page, x: f.x, y: f.y, w: f.w, h: f.h,
-      type: f.type, label: f.label, required: f.required, answer: f.answer,
+      type: f.type, label: f.label, required: f.required, answer: f.answer, grp: f.grp || null,
     }));
     renderAllFields(); refreshFieldList();
     toast(`문서 복원 · 필드 ${state.fields.length}개`);

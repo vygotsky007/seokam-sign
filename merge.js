@@ -13,16 +13,24 @@ function maskName(s) {
   return a[0] + 'O'.repeat(a.length - 2) + a[a.length - 1];
 }
 
-// 비율좌표(좌상단 기준) + 값으로 PDF 합성
-// opts: { pdfBytes(Buffer), fontBytes(Buffer), fields[], values{}, sigBuffers{fieldId:Buffer} }
+function drawCheck(page, bx, bw, bh, boxTopY, boxBottomY, color) {
+  const pad = Math.min(bw, bh) * 0.2;
+  const x1 = bx + pad, y1 = boxBottomY + bh * 0.45;
+  const x2 = bx + bw * 0.42, y2 = boxBottomY + pad;
+  const x3 = bx + bw - pad, y3 = boxTopY - pad;
+  const lw = Math.max(1.2, Math.min(bw, bh) * 0.1);
+  page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: lw, color });
+  page.drawLine({ start: { x: x2, y: y2 }, end: { x: x3, y: y3 }, thickness: lw, color });
+}
+
+// opts: { pdfBytes, fontBytes, fields[], values{}, sigBuffers{}, footer{time,ip,docId} }
 async function mergePdf(opts) {
-  const { pdfBytes, fontBytes, fields, values, sigBuffers } = opts;
+  const { pdfBytes, fontBytes, fields, values, sigBuffers, footer } = opts;
   const pdf = await PDFDocument.load(pdfBytes);
   pdf.registerFontkit(fontkit);
   const font = await pdf.embedFont(fontBytes, { subset: false });
   const pages = pdf.getPages();
 
-  // 서명 이미지 미리 embed (필드별)
   const embeddedSigs = {};
   for (const f of fields) {
     if (f.type === 'signature' && sigBuffers && sigBuffers[f.id]) {
@@ -34,43 +42,55 @@ async function mergePdf(opts) {
     const page = pages[f.page];
     if (!page) continue;
     const { width: Wp, height: Hp } = page.getSize();
-    const bx = f.x * Wp;
-    const bw = f.w * Wp;
-    const bh = f.h * Hp;
-    const boxTopY = Hp - f.y * Hp;        // 박스 상단 (아래 기준)
-    const boxBottomY = Hp - (f.y + f.h) * Hp; // 박스 하단
+    const bx = f.x * Wp, bw = f.w * Wp, bh = f.h * Hp;
+    const boxTopY = Hp - f.y * Hp;
+    const boxBottomY = Hp - (f.y + f.h) * Hp;
 
-    if (f.type === 'text' || f.type === 'confirm') {
+    if (f.type === 'text' || f.type === 'confirm' || f.type === 'date') {
       const text = (values[f.id] || '').toString();
       if (!text) continue;
-      let size = Math.min(13, Math.max(8, bh * 0.6));
-      // 폭 넘치면 축소
+      let size = Math.min(13, Math.max(8, bh * 0.62));
       let tw = font.widthOfTextAtSize(text, size);
       while (tw > bw - 4 && size > 7) { size -= 0.5; tw = font.widthOfTextAtSize(text, size); }
-      const cy = (boxTopY + boxBottomY) / 2 - size * 0.35;
-      page.drawText(text, { x: bx + 2, y: cy, size, font, color: rgb(0.1, 0.12, 0.16) });
+      // 세로: 폰트 메트릭으로 박스 정중앙에 맞춤
+      const ascent = font.heightAtSize(size, { descender: false });
+      const full = font.heightAtSize(size);
+      const descent = full - ascent;
+      const cy = boxBottomY + (bh - (ascent + descent)) / 2 + descent;
+      // 가로: 가운데 정렬 (넘치면 좌측 정렬)
+      const cx = tw < bw - 4 ? bx + (bw - tw) / 2 : bx + 2;
+      page.drawText(text, { x: cx, y: cy, size, font, color: rgb(0.1, 0.12, 0.16) });
 
     } else if (f.type === 'checkbox') {
       if (values[f.id] !== true) continue;
-      // ✓ 벡터로 직접 (폰트 의존 X)
-      const pad = Math.min(bw, bh) * 0.2;
-      const x1 = bx + pad, y1 = boxBottomY + bh * 0.45;
-      const x2 = bx + bw * 0.42, y2 = boxBottomY + pad;
-      const x3 = bx + bw - pad, y3 = boxTopY - pad;
-      const lw = Math.max(1.2, Math.min(bw, bh) * 0.1);
-      page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: lw, color: rgb(0.11, 0.48, 0.25) });
-      page.drawLine({ start: { x: x2, y: y2 }, end: { x: x3, y: y3 }, thickness: lw, color: rgb(0.11, 0.48, 0.25) });
+      drawCheck(page, bx, bw, bh, boxTopY, boxBottomY, rgb(0.11, 0.48, 0.25));
+
+    } else if (f.type === 'radio') {
+      if (values[f.grp] !== f.id) continue;
+      drawCheck(page, bx, bw, bh, boxTopY, boxBottomY, rgb(0.11, 0.32, 0.7));
 
     } else if (f.type === 'signature') {
       const img = embeddedSigs[f.id];
       if (!img) continue;
-      // 박스 안에 비율 유지하여 맞춤
       const scale = Math.min(bw / img.width, bh / img.height);
       const dw = img.width * scale, dh = img.height * scale;
       const dx = bx + (bw - dw) / 2;
       const dy = boxBottomY + (bh - dh) / 2;
       page.drawImage(img, { x: dx, y: dy, width: dw, height: dh });
     }
+  }
+
+  if (footer) {
+    const last = pages[pages.length - 1];
+    const { width: Wp } = last.getSize();
+    const parts = [];
+    if (footer.time) parts.push('제출 ' + footer.time);
+    if (footer.ip) parts.push('IP ' + footer.ip);
+    if (footer.docId) parts.push('문서 #' + String(footer.docId).slice(0, 8));
+    parts.push('seokam-sign');
+    const line = parts.join('  ·  ');
+    last.drawLine({ start: { x: 28, y: 26 }, end: { x: Wp - 28, y: 26 }, thickness: 0.5, color: rgb(0.8, 0.83, 0.88) });
+    last.drawText(line, { x: 28, y: 14, size: 7.5, font, color: rgb(0.55, 0.59, 0.65) });
   }
 
   return await pdf.save();

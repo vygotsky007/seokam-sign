@@ -44,13 +44,20 @@
           <button class="tool" data-type="confirm">✏️ 따라쓰기</button>
           <button class="tool" data-type="checkbox">☑️ 동의 체크</button>
           <button class="tool" data-type="signature">🖊️ 손글씨 서명</button>
+          <button class="tool" data-type="date">📅 날짜</button>
+          <button class="tool" data-type="radio">🔘 예/아니요</button>
         </div>
         <button id="selectMode" class="tool tool-wide active">🖱️ 선택/이동</button>
         <p class="legend"><span class="swatch req"></span> 빨강 = 필수 &nbsp; <span class="swatch opt"></span> 선택</p>
       </section>
 
       <section class="panel">
-        <h3>3. 필드 목록 <span id="fieldCount" class="count">0</span></h3>
+        <h3>3. 남길 말 <span style="font-size:11px;color:var(--muted);font-weight:400">(학부모 안내)</span></h3>
+        <textarea id="memo" rows="3" placeholder="예) 1·2쪽 모두 작성해 주세요. 서명은 보호자 본인이 해주세요." style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px;resize:vertical"></textarea>
+      </section>
+
+      <section class="panel">
+        <h3>4. 필드 목록 <span id="fieldCount" class="count">0</span></h3>
         <ul id="fieldList" class="field-list"></ul>
       </section>
     </aside>
@@ -71,6 +78,17 @@
     <div class="editor-row" id="edAnswerRow" style="display:none">
       <label id="edAnswerLabel">정답 문구</label>
       <input id="edAnswer" type="text" placeholder="" />
+    </div>
+    <div class="editor-row" id="edDateRow" style="display:none">
+      <label>날짜 입력 방식</label>
+      <select id="edDateMode" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;font-size:13px">
+        <option value="auto">제출일 자동 입력</option>
+        <option value="manual">학부모가 직접 선택</option>
+      </select>
+    </div>
+    <div class="editor-row" id="edGrpRow" style="display:none">
+      <label>그룹 이름 <span style="color:var(--muted)">(같은 그룹끼리 택1)</span></label>
+      <input id="edGrp" type="text" placeholder="예: 수집동의_학생" />
     </div>
     <div class="editor-row check">
       <label><input id="edRequired" type="checkbox" /> 필수 (빨강)</label>

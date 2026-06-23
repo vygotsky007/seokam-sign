@@ -194,10 +194,11 @@ app.post('/api/documents/:id/fields', async (req, res) => {
       doc_id: docId,
       page: Number.isFinite(f.page) ? f.page : 0,
       x: clamp01(f.x), y: clamp01(f.y), w: clamp01(f.w), h: clamp01(f.h),
-      type: ['text', 'confirm', 'checkbox', 'signature'].includes(f.type) ? f.type : 'text',
+      type: ['text', 'confirm', 'checkbox', 'signature', 'date', 'radio'].includes(f.type) ? f.type : 'text',
       label: (f.label || '').toString().slice(0, 200),
       required: f.required === true,
       answer: (f.answer == null ? null : f.answer.toString().slice(0, 500)),
+      grp: (f.grp == null ? null : f.grp.toString().slice(0, 100)),
       sort: Number.isFinite(f.sort) ? f.sort : i,
     }));
 
@@ -262,6 +263,28 @@ app.get('/api/documents', async (req, res) => {
     }
   } catch (e) {
     res.status(500).json({ error: e.message || '목록 조회 실패' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ②단계: 문서 메모(남길 말) 저장
+// ---------------------------------------------------------------------------
+app.post('/api/documents/:id/meta', async (req, res) => {
+  try {
+    const docId = req.params.id;
+    const memo = (req.body.memo == null ? '' : req.body.memo.toString().slice(0, 1000));
+    if (USE_SUPABASE) {
+      const { error } = await supa.from('documents').update({ memo }).eq('id', docId);
+      if (error) throw error;
+    } else {
+      const db = readLocalDB();
+      const d = db.documents.find((x) => x.id === docId);
+      if (d) { d.memo = memo; writeLocalDB(db); }
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('메모 저장 오류:', e.message || e);
+    res.status(500).json({ error: e.message || '메모 저장 실패' });
   }
 });
 
@@ -456,6 +479,7 @@ app.get('/api/f/:token', async (req, res) => {
     res.json({
       ok: true,
       title: bundle.doc.title,
+      memo: bundle.doc.memo || '',
       expires_at: bundle.link.expires_at,
       fields: bundle.fields,
       values: bundle.response ? bundle.response.values : {},
@@ -521,23 +545,41 @@ app.post('/api/f/:token', async (req, res) => {
 
     // 서버측 필수 검증
     const missing = [];
+    // 라디오 그룹별 필수 여부
+    const radioGroups = {}; // grp -> {required, selected}
     for (const f of fields) {
+      if (f.type !== 'radio' || !f.grp) continue;
+      if (!radioGroups[f.grp]) radioGroups[f.grp] = { required: false, selected: false, label: f.label };
+      if (f.required) radioGroups[f.grp].required = true;
+      if (inVals[f.grp] === f.id) radioGroups[f.grp].selected = true;
+    }
+    for (const f of fields) {
+      if (f.type === 'radio') continue; // 그룹 단위로 아래에서 검증
       if (!f.required) continue;
-      if (f.type === 'text') { if (!(inVals[f.id] || '').toString().trim()) missing.push(f.label); }
+      if (f.type === 'text' || f.type === 'date') { if (!(inVals[f.id] || '').toString().trim()) missing.push(f.label); }
       else if (f.type === 'confirm') {
         const v = (inVals[f.id] || '').toString();
         if (!v.trim() || normalizeConfirm(v) !== normalizeConfirm(f.answer)) missing.push(f.label + '(따라쓰기 불일치)');
       } else if (f.type === 'checkbox') { if (inVals[f.id] !== true) missing.push(f.label); }
       else if (f.type === 'signature') { if (!inSigs[f.id]) missing.push(f.label); }
     }
+    for (const grp of Object.keys(radioGroups)) {
+      if (radioGroups[grp].required && !radioGroups[grp].selected) missing.push('선택 항목(' + grp + ')');
+    }
     if (missing.length) return res.status(400).json({ error: '필수 항목을 확인하세요: ' + missing.join(', '), missing });
 
-    // 서명 이미지 저장 (dataURL → PNG)
+    // 값 정리 (서명 제외 텍스트/체크/날짜/라디오그룹)
     const values = {};
+    const grpKeys = new Set(fields.filter((f) => f.type === 'radio' && f.grp).map((f) => f.grp));
     for (const f of fields) {
-      if (f.type === 'signature') continue;
+      if (f.type === 'signature' || f.type === 'radio') continue;
       if (f.type === 'checkbox') values[f.id] = inVals[f.id] === true;
       else if (inVals[f.id] != null) values[f.id] = inVals[f.id].toString().slice(0, 1000);
+    }
+    // 라디오 그룹 선택값 저장 (grp -> 선택된 fieldId)
+    for (const grp of grpKeys) {
+      const sel = inVals[grp];
+      if (sel && fields.some((f) => f.type === 'radio' && f.grp === grp && f.id === sel)) values[grp] = sel;
     }
     let primarySig = null;
     for (const f of fields) {
@@ -558,10 +600,12 @@ app.post('/api/f/:token', async (req, res) => {
       if (!primarySig) primarySig = spath;
     }
 
+    const clientIp = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim()
+      || (req.socket && req.socket.remoteAddress) || '';
     const row = {
       id: bundle.response ? bundle.response.id : crypto.randomUUID(),
       link_id: bundle.link.id, token, values,
-      signature_path: primarySig, submitted_at: new Date().toISOString(),
+      signature_path: primarySig, submit_ip: clientIp, submitted_at: new Date().toISOString(),
     };
 
     // 링크당 1건: 삭제 후 삽입 (재작성=덮어쓰기)
@@ -644,6 +688,17 @@ function nameFieldId(fields) {
   return t ? t.id : null;
 }
 
+function buildFooter(resp, doc) {
+  if (!resp) return null;
+  let time = '';
+  try {
+    const d = new Date(resp.submitted_at);
+    const p = (n) => String(n).padStart(2, '0');
+    time = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  } catch (e) {}
+  return { time, ip: resp.submit_ip || '', docId: doc ? doc.id : '' };
+}
+
 // 교직원: 제출 현황 목록
 app.get('/api/documents/:id/submissions', async (req, res) => {
   try {
@@ -696,7 +751,7 @@ app.get('/api/links/:linkId/merged.pdf', async (req, res) => {
         if (b) sigBuffers[f.id] = b;
       }
     }
-    const out = await mergePdf({ pdfBytes, fontBytes: FONT_BYTES, fields, values: resp.values || {}, sigBuffers });
+    const out = await mergePdf({ pdfBytes, fontBytes: FONT_BYTES, fields, values: resp.values || {}, sigBuffers, footer: buildFooter(resp, doc) });
     const nfid = nameFieldId(fields);
     const nm = nfid ? maskName((resp.values || {})[nfid]) : '';
     const fname = encodeURIComponent(`${doc.title}_${nm || ('link' + link.seq)}.pdf`);
@@ -732,7 +787,7 @@ app.get('/api/documents/:id/merged.zip', async (req, res) => {
       for (const f of fields) {
         if (f.type === 'signature') { const b = await getSigBytes((resp.values || {})[f.id]); if (b) sigBuffers[f.id] = b; }
       }
-      const out = await mergePdf({ pdfBytes, fontBytes: FONT_BYTES, fields, values: resp.values || {}, sigBuffers });
+      const out = await mergePdf({ pdfBytes, fontBytes: FONT_BYTES, fields, values: resp.values || {}, sigBuffers, footer: buildFooter(resp, doc) });
       const nm = nfid ? maskName((resp.values || {})[nfid]) : '';
       const seq = String(l.seq).padStart(2, '0');
       archive.append(Buffer.from(out), { name: `${seq}_${nm || ('link' + l.seq)}.pdf` });
@@ -745,6 +800,11 @@ app.get('/api/documents/:id/merged.zip', async (req, res) => {
 });
 
 
+
+// 환경 정보 (클라이언트가 폴백 여부 표시)
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, store: USE_SUPABASE ? 'supabase' : 'local', bucket: BUCKET });
+});
 
 function clamp01(v) {
   const n = Number(v);
