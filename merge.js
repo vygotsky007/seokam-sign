@@ -1,6 +1,10 @@
 'use strict';
 
-const { PDFDocument, rgb } = require('pdf-lib');
+const {
+  PDFDocument, rgb,
+  pushGraphicsState, popGraphicsState,
+  moveTo, lineTo, closePath, clip, endPath,
+} = require('pdf-lib');
 const fontkit = require('@pdf-lib/fontkit');
 
 // 이름 가운데 마스킹 (홍길동→홍O동, 2글자 홍O)
@@ -49,17 +53,35 @@ async function mergePdf(opts) {
     if (f.type === 'text' || f.type === 'confirm' || f.type === 'date') {
       const text = (values[f.id] || '').toString();
       if (!text) continue;
-      let size = Math.min(13, Math.max(8, bh * 0.62));
+      const MIN = 4; // 최소 글자 크기(pt)
+      const padX = Math.min(4, bw * 0.12); // 좌우 여백
+      // 크기 결정: 박스 높이 기준에서 시작해, 폭·높이 양쪽에 맞을 때까지 축소(최소 4pt)
+      let size = Math.min(13, Math.max(MIN, bh * 0.62));
+      // 세로: 글자 전체 높이가 박스보다 크면 축소
+      while (size > MIN && font.heightAtSize(size) > bh) size -= 0.5;
+      // 가로: 글자 폭이 박스(좌우 여백 제외)보다 크면 축소
       let tw = font.widthOfTextAtSize(text, size);
-      while (tw > bw - 4 && size > 7) { size -= 0.5; tw = font.widthOfTextAtSize(text, size); }
+      while (size > MIN && tw > bw - padX * 2) { size -= 0.5; tw = font.widthOfTextAtSize(text, size); }
       // 세로: 폰트 메트릭으로 박스 정중앙에 맞춤
       const ascent = font.heightAtSize(size, { descender: false });
       const full = font.heightAtSize(size);
       const descent = full - ascent;
       const cy = boxBottomY + (bh - (ascent + descent)) / 2 + descent;
-      // 가로: 가운데 정렬 (넘치면 좌측 정렬)
-      const cx = tw < bw - 4 ? bx + (bw - tw) / 2 : bx + 2;
+      // 가로: 가운데 정렬 (넘치면 좌측 정렬 + 아래 클리핑으로 잘라냄)
+      const cx = tw <= bw - padX * 2 ? bx + (bw - tw) / 2 : bx + padX;
+      // 박스 영역으로 클리핑한 뒤 그려서 글자가 박스 밖으로 절대 안 나가게 함
+      page.pushOperators(
+        pushGraphicsState(),
+        moveTo(bx, boxBottomY),
+        lineTo(bx + bw, boxBottomY),
+        lineTo(bx + bw, boxBottomY + bh),
+        lineTo(bx, boxBottomY + bh),
+        closePath(),
+        clip(),
+        endPath(),
+      );
       page.drawText(text, { x: cx, y: cy, size, font, color: rgb(0.1, 0.12, 0.16) });
+      page.pushOperators(popGraphicsState());
 
     } else if (f.type === 'checkbox') {
       if (values[f.id] !== true) continue;
