@@ -9,6 +9,16 @@ const TYPE_META = {
   radio:     { ko: '예/아니요',  short: '선택',    answer: false },
 };
 
+const TOOL_HINT = {
+  select:    '박스를 클릭해 수정 · 드래그로 이동 · 모서리로 크기 조절',
+  text:      '표는 칸마다 따로 그리세요',
+  confirm:   '학부모가 똑같이 적을 문구 입력',
+  checkbox:  '□ 위에 작게',
+  signature: '서명란 크기에 맞춰, 학생·보호자 각각',
+  date:      '자동/직접 선택 고르기',
+  radio:     '같은 질문은 그룹 이름 똑같이(택1)',
+};
+
 const state = {
   docId: null,
   pdfDoc: null,
@@ -158,6 +168,8 @@ function setTool(t) {
   if (t === 'select') document.getElementById('selectMode').classList.add('active');
   else document.querySelector(`.tool[data-type="${t}"]`).classList.add('active');
   document.getElementById('stage').classList.toggle('placing', t !== 'select');
+  const hintEl = document.getElementById('toolHint');
+  if (hintEl && TOOL_HINT[t]) hintEl.textContent = TOOL_HINT[t];
 }
 
 // ---------------------------------------------------------------------------

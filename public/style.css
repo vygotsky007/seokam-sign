@@ -152,6 +152,24 @@ body {
 }
 .hidden { display: none !important; }
 
+/* 교사 안내: 도구별 한 줄 힌트 (파란 박스) */
+.tool-hint {
+  margin-top: 10px; padding: 8px 11px; border-radius: 9px;
+  background: #eef4ff; border: 1px solid #cfe0ff; color: var(--brand-d);
+  font-size: 12.5px; line-height: 1.45;
+}
+/* 작성 팁 (접이식) */
+.tips { margin-top: 9px; font-size: 12.5px; }
+.tips > summary {
+  cursor: pointer; list-style: none; color: var(--brand);
+  font-weight: 600; padding: 6px 2px; user-select: none;
+}
+.tips > summary::-webkit-details-marker { display: none; }
+.tips > summary::before { content: '💡 '; }
+.tips[open] > summary { margin-bottom: 4px; }
+.tips ul { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.6; }
+.tips li { margin: 2px 0; }
+
 @media (max-width: 820px) {
   .layout { flex-direction: column; }
   .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--line); max-height: 42vh; }
