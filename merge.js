@@ -18,11 +18,14 @@ function maskName(s) {
 }
 
 function drawCheck(page, bx, bw, bh, boxTopY, boxBottomY, color) {
-  const pad = Math.min(bw, bh) * 0.2;
-  const x1 = bx + pad, y1 = boxBottomY + bh * 0.45;
-  const x2 = bx + bw * 0.42, y2 = boxBottomY + pad;
-  const x3 = bx + bw - pad, y3 = boxTopY - pad;
-  const lw = Math.max(1.2, Math.min(bw, bh) * 0.1);
+  // 마크 크기 상한 14pt, 박스가 커도 정중앙에만 그림
+  const s = Math.min(bw, bh, 14);
+  const cxc = bx + bw / 2;          // 박스 가로 중앙
+  const cyc = boxBottomY + bh / 2;  // 박스 세로 중앙
+  const x1 = cxc - 0.38 * s, y1 = cyc + 0.00 * s;
+  const x2 = cxc - 0.08 * s, y2 = cyc - 0.30 * s;
+  const x3 = cxc + 0.40 * s, y3 = cyc + 0.34 * s;
+  const lw = Math.max(1.2, s * 0.12);
   page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: lw, color });
   page.drawLine({ start: { x: x2, y: y2 }, end: { x: x3, y: y3 }, thickness: lw, color });
 }
@@ -94,7 +97,9 @@ async function mergePdf(opts) {
     } else if (f.type === 'signature') {
       const img = embeddedSigs[f.id];
       if (!img) continue;
-      const scale = Math.min(bw / img.width, bh / img.height);
+      // 박스 안쪽 여백(가로 88%·세로 76%)으로 비율유지 축소 후 가운데 배치
+      const availW = bw * 0.88, availH = bh * 0.76;
+      const scale = Math.min(availW / img.width, availH / img.height);
       const dw = img.width * scale, dh = img.height * scale;
       const dx = bx + (bw - dw) / 2;
       const dy = boxBottomY + (bh - dh) / 2;
