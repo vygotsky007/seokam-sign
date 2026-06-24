@@ -206,7 +206,6 @@ function attachPlacement(overlay, pageIdx) {
       state.fields.push(field);
       renderAllFields();
       refreshFieldList();
-      setTool('select');
       openEditor(field.id);
     };
     overlay.setPointerCapture(e.pointerId);
