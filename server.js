@@ -83,7 +83,7 @@ async function ensureBucket() {
       const { error: cErr } = await supa.storage.createBucket(BUCKET, {
         public: false,
         fileSizeLimit: '32MB',
-        allowedMimeTypes: ['application/pdf'],
+        allowedMimeTypes: ['application/pdf', 'image/png'],
       });
       if (cErr) throw cErr;
       console.log(`[seokam-sign] Storage 버킷 '${BUCKET}' 생성 완료.`);
