@@ -36,3 +36,17 @@ npm start              # http://localhost:3500
 
 ## DB (Supabase SQL Editor에서 먼저 실행)
 `schema.sql` 참고. RLS는 끄고 서버 서비스키로만 접근.
+
+## ⚠ 운영(Supabase) 배포 시 주의
+
+### 1) 기존 `sign-docs` 버킷의 MIME 허용 갱신 (서명 PNG 업로드)
+코드의 `allowedMimeTypes`는 **버킷을 새로 만들 때만** 적용됩니다. 운영에 `sign-docs` 버킷이 **이미 존재**하면 코드 변경이 반영되지 않으므로, Supabase **SQL Editor**에서 아래를 한 번 실행해 서명 PNG(`image/png`) 업로드를 허용해야 합니다.
+
+```sql
+update storage.buckets
+set allowed_mime_types = array['application/pdf','image/png']
+where id = 'sign-docs';
+```
+
+### 2) Node 22 이상 필요 (supabase-js websocket)
+`@supabase/supabase-js`의 websocket 지원을 위해 **Node 22 이상**이 필요합니다. 본 저장소는 `package.json`의 `engines.node`(`>=22`)와 루트 `.nvmrc`(`22`)에 버전을 지정해 두었으므로, Railway가 이를 보고 Node 22로 빌드/실행합니다.
