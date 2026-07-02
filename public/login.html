@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>석암 전자서명 · 관리자 로그인</title>
+  <style>
+    :root { --bg:#f4f6fa; --panel:#fff; --line:#e2e7ef; --ink:#1f2733; --muted:#6b7686; --brand:#2f6df4; --req:#e23b3b; }
+    * { box-sizing:border-box; }
+    html,body { margin:0; height:100%; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); display:flex; align-items:center; justify-content:center; padding:20px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:26px 24px; width:100%; max-width:360px; box-shadow:0 8px 30px rgba(20,30,50,.08); text-align:center; }
+    .logo { font-size:34px; }
+    h1 { font-size:17px; margin:8px 0 2px; }
+    .sub { font-size:12.5px; color:var(--muted); margin-bottom:18px; }
+    label { display:block; text-align:left; font-size:12.5px; color:var(--muted); margin-bottom:6px; }
+    input { width:100%; height:48px; border:1px solid var(--line); border-radius:11px; padding:0 14px; font-size:17px; text-align:center; letter-spacing:2px; }
+    input:focus { outline:none; border-color:var(--brand); box-shadow:0 0 0 3px rgba(47,109,244,.12); }
+    button { margin-top:14px; width:100%; height:48px; border:none; border-radius:11px; font-size:15px; font-weight:600; color:#fff; background:var(--brand); cursor:pointer; }
+    button:disabled { background:#aebfdc; }
+    .err { color:var(--req); font-size:12.5px; margin-top:10px; min-height:16px; }
+  </style>
+</head>
+<body>
+  <form class="card" id="loginForm">
+    <div class="logo">🔒</div>
+    <h1>관리자 로그인</h1>
+    <div class="sub">석암 전자서명 관리 화면 · PIN을 입력하세요</div>
+    <label for="pin">관리자 PIN</label>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="••••" autofocus />
+    <button id="btn" type="submit">들어가기</button>
+    <div class="err" id="err"></div>
+  </form>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const next = params.get('next') || '/';
+    const form = document.getElementById('loginForm');
+    const err = document.getElementById('err');
+    const btn = document.getElementById('btn');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      btn.disabled = true; btn.textContent = '확인 중…';
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: document.getElementById('pin').value }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '로그인 실패');
+        location.href = next.startsWith('/') ? next : '/';
+      } catch (e2) {
+        err.textContent = e2.message || '로그인 실패';
+        btn.disabled = false; btn.textContent = '들어가기';
+        document.getElementById('pin').value = '';
+        document.getElementById('pin').focus();
+      }
+    });
+  </script>
+</body>
+</html>

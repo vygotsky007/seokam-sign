@@ -1,5 +1,15 @@
 'use strict';
 
+// 세션 만료 등으로 관리 API가 401을 주면 로그인 화면으로 보낸다.
+(function () {
+  const _f = window.fetch;
+  window.fetch = async function (...args) {
+    const r = await _f.apply(this, args);
+    if (r.status === 401) location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+    return r;
+  };
+})();
+
 const TYPE_KO = { text: '텍스트', confirm: '따라쓰기', checkbox: '동의 체크', signature: '손글씨 서명' };
 const docId = new URLSearchParams(location.search).get('doc');
 const state = { doc: null, fields: [], period: 3 };

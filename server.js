@@ -26,26 +26,88 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const ANON_KEY = process.env.SUPABASE_KEY || '';
 const BUCKET = 'sign-docs';
 
-// 관리자 PIN(선택). 설정 시 제출현황 이름을 '부분 마스킹(박○영)'으로 보려면 PIN 필요.
-// 미설정이면 단일 신뢰 배포로 간주해 기존처럼 부분 마스킹을 그대로 노출(비회귀).
-const ADMIN_PIN = (process.env.ADMIN_PIN || '').toString().trim();
-// 성만 노출(비인증): 박○○
-function maskNameFull(s) {
-  const a = [...(s || '').toString().trim()];
-  if (a.length <= 1) return a.join('');
-  return a[0] + '○'.repeat(a.length - 1);
+// ---------------------------------------------------------------------------
+// 관리자 인증(PIN 게이트) — 편집기/발급/제출현황 등 모든 관리 기능 보호.
+//   · SIGN_ADMIN_HASH : 관리자 PIN의 bcrypt 해시(권장). `npm run hash -- "PIN"` 으로 생성.
+//   · ADMIN_PIN       : (레거시/폴백) 평문 PIN. 해시가 없을 때만 사용. 마스킹 겸용에서 통합됨.
+//   둘 다 없으면 게이트 비활성(로컬/신뢰 배포용) — 콘솔에 크게 경고.
+// ---------------------------------------------------------------------------
+const bcrypt = require('bcryptjs');
+const SIGN_ADMIN_HASH = (process.env.SIGN_ADMIN_HASH || '').toString().trim();
+const ADMIN_PIN = (process.env.ADMIN_PIN || '').toString().trim(); // 레거시 폴백(평문)
+const ADMIN_CONFIGURED = !!(SIGN_ADMIN_HASH || ADMIN_PIN);
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12시간
+const SESSION_COOKIE = 'sign_admin';
+// 쿠키 서명 시크릿: 설정값 우선, 없으면 해시/핀에서 파생(재시작해도 안정), 최후엔 임시 랜덤.
+const SESSION_SECRET = (process.env.SIGN_SESSION_SECRET || SIGN_ADMIN_HASH || ADMIN_PIN
+  || crypto.randomBytes(32).toString('hex'));
+
+if (!ADMIN_CONFIGURED) {
+  console.warn('============================================================');
+  console.warn('[seokam-sign] ⚠ 관리자 인증 미설정 — 관리 화면이 보호되지 않습니다(공개).');
+  console.warn('[seokam-sign]   운영에서는 SIGN_ADMIN_HASH(권장) 또는 ADMIN_PIN 을 설정하세요.');
+  console.warn('[seokam-sign]   해시 생성:  npm run hash -- "원하는PIN"');
+  console.warn('============================================================');
+} else {
+  console.log('[seokam-sign] 관리자 인증 활성화 (' + (SIGN_ADMIN_HASH ? 'bcrypt 해시' : '평문 PIN(레거시)') + ')');
 }
-// 성+이름끝 노출(인증): 박○영
+
+// 입력 PIN 검증 — 해시 우선(bcrypt), 없으면 평문 비교.
+function verifyAdminCredential(input) {
+  const v = (input == null ? '' : String(input)).trim();
+  if (!v) return false;
+  if (SIGN_ADMIN_HASH) { try { return bcrypt.compareSync(v, SIGN_ADMIN_HASH); } catch { return false; } }
+  if (ADMIN_PIN) return v === ADMIN_PIN;
+  return false;
+}
+
+// 서명 세션 토큰(HMAC) — 무상태 쿠키.
+function signSession(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
+  return body + '.' + sig;
+}
+function verifySession(token) {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+  const [body, sig] = token.split('.');
+  if (!body || !sig) return null;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
+  const a = Buffer.from(sig), b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try { const data = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); return (data && data.exp > Date.now()) ? data : null; }
+  catch { return null; }
+}
+function parseCookies(req) {
+  const out = {}; const h = req.headers.cookie; if (!h) return out;
+  h.split(';').forEach(part => { const i = part.indexOf('='); if (i < 0) return; const k = part.slice(0, i).trim(); if (k) out[k] = decodeURIComponent(part.slice(i + 1).trim()); });
+  return out;
+}
+// 관리자 인증 여부: 게이트 비활성이면 항상 통과, 아니면 유효 세션 쿠키 필요.
+function isAdminAuthed(req) {
+  if (!ADMIN_CONFIGURED) return true;
+  return !!verifySession(parseCookies(req)[SESSION_COOKIE]);
+}
+
+// 로그인 rate-limit (IP당 15분 5회) — 의존성 없이 인메모리.
+const LOGIN_WINDOW_MS = 15 * 60 * 1000, LOGIN_MAX = 5;
+const loginHits = new Map();
+function loginRateLimited(ip) {
+  const now = Date.now();
+  const rec = loginHits.get(ip) || { count: 0, reset: now + LOGIN_WINDOW_MS };
+  if (now > rec.reset) { rec.count = 0; rec.reset = now + LOGIN_WINDOW_MS; }
+  rec.count++; loginHits.set(ip, rec);
+  return rec.count > LOGIN_MAX;
+}
+function clientIp(req) {
+  return (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || (req.socket && req.socket.remoteAddress) || 'unknown';
+}
+
+// 이름 마스킹 — 관리 화면은 인증 후 접근되므로 부분 마스킹(박○영)으로 표시.
 function maskNamePartial(s) {
   const a = [...(s || '').toString().trim()];
   if (a.length <= 1) return a.join('');
   if (a.length === 2) return a[0] + '○';
   return a[0] + '○'.repeat(a.length - 2) + a[a.length - 1];
-}
-function isAdminAuthed(req) {
-  if (!ADMIN_PIN) return true; // PIN 미설정 = 신뢰 배포(기존 동작 유지)
-  const p = (req.query.pin || req.headers['x-admin-pin'] || '').toString().trim();
-  return !!p && p === ADMIN_PIN;
 }
 
 let supa = null; // 서비스 롤 클라이언트
@@ -120,9 +182,57 @@ async function ensureBucket() {
 // ---------------------------------------------------------------------------
 // 미들웨어
 // ---------------------------------------------------------------------------
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '32mb' }));
 app.use(express.urlencoded({ extended: true, limit: '32mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+// ── 인증 라우트 (공개) ──────────────────────────────
+app.get('/login', (req, res) => {
+  if (isAdminAuthed(req)) return res.redirect('/');
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+app.post('/api/login', (req, res) => {
+  if (loginRateLimited(clientIp(req))) {
+    return res.status(429).json({ error: '로그인 시도가 너무 많습니다. 15분 후 다시 시도해 주세요.' });
+  }
+  if (!ADMIN_CONFIGURED) return res.json({ ok: true }); // 게이트 비활성 배포
+  if (!verifyAdminCredential((req.body || {}).pin)) {
+    return res.status(401).json({ error: 'PIN이 올바르지 않습니다.' });
+  }
+  const token = signSession({ exp: Date.now() + SESSION_TTL_MS, role: 'admin' });
+  const secure = (req.headers['x-forwarded-proto'] === 'https') || req.secure === true;
+  res.setHeader('Set-Cookie',
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secure ? '; Secure' : ''}`);
+  res.json({ ok: true });
+});
+app.post('/api/logout', (req, res) => {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  res.json({ ok: true });
+});
+app.get('/api/session', (req, res) => res.json({ authed: isAdminAuthed(req), configured: ADMIN_CONFIGURED }));
+
+// ── 관리 API 가드 ── 공개: health/login/logout/session/f(학부모). 그 외 /api/* 는 인증 필요.
+app.use('/api', (req, res, next) => {
+  const p = req.path;
+  if (p === '/health' || p === '/login' || p === '/logout' || p === '/session' || p.startsWith('/f/')) return next();
+  if (isAdminAuthed(req)) return next();
+  return res.status(401).json({ error: '관리자 인증이 필요합니다.', reason: 'auth' });
+});
+
+// ── 관리 화면(HTML) 가드 — 미인증이면 /login 으로 리다이렉트 ──
+function adminPage(file) {
+  return (req, res) => {
+    if (!isAdminAuthed(req)) return res.redirect('/login');
+    res.sendFile(path.join(__dirname, 'public', file));
+  };
+}
+app.get(['/', '/index.html'], adminPage('index.html'));
+app.get('/links.html', adminPage('links.html'));
+app.get('/submissions.html', adminPage('submissions.html'));
+
+// 정적 자산(비-HTML). index 자동 서빙 끔 → 관리 HTML은 위 가드가 먼저 처리.
+// login.html/form.html 및 css/js/images 는 공개 자산(민감 데이터는 모두 가드된 API 뒤에 있음).
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -742,9 +852,8 @@ app.get('/api/documents/:id/submissions', async (req, res) => {
     if (!doc) return res.status(404).json({ error: '문서 없음' });
     const nfid = nameFieldId(fields);
     const rmap = new Map(responses.map((r) => [r.link_id, r]));
-    const authed = isAdminAuthed(req);
-    const maskFn = authed ? maskNamePartial : maskNameFull; // 인증: 박○영 / 비인증: 박○○
     const now = Date.now();
+    // 이 엔드포인트는 관리 API 가드 뒤에 있으므로 인증된 관리자만 접근 → 부분 마스킹(박○영)로 표시.
     const rows = links.map((l) => {
       const r = rmap.get(l.id);
       const status = l.is_closed ? 'closed'
@@ -752,7 +861,7 @@ app.get('/api/documents/:id/submissions', async (req, res) => {
       return {
         link_id: l.id, seq: l.seq, token: l.token,
         done: !!r,
-        name: r && nfid ? maskFn((r.values || {})[nfid]) : null,
+        name: r && nfid ? maskNamePartial((r.values || {})[nfid]) : null,
         submitted_at: r ? r.submitted_at : null,
         status,
       };
@@ -761,8 +870,6 @@ app.get('/api/documents/:id/submissions', async (req, res) => {
       title: doc.title,
       total: links.length,
       done: rows.filter((x) => x.done).length,
-      authed,                    // 부분 마스킹 표시 중 여부
-      pin_required: !!ADMIN_PIN, // PIN 게이트가 설정돼 있는지(비인증 시 UI에서 입력 유도)
       rows,
     });
   } catch (e) {
