@@ -174,3 +174,26 @@ body {
   .layout { flex-direction: column; }
   .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--line); max-height: 42vh; }
 }
+
+/* ===== 발급 전 확인 모달 ===== */
+.issue-mask { position: fixed; inset: 0; background: rgba(20,30,50,.5); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.issue-mask.hidden { display: none; }
+.issue-box { background: #fff; width: 100%; max-width: 560px; max-height: 88vh; border-radius: 14px; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,.28); }
+.issue-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--line, #e2e7ef); }
+.issue-head h2 { font-size: 16px; margin: 0; }
+.issue-body { padding: 14px 16px; overflow-y: auto; }
+.issue-summary { font-size: 14px; margin-bottom: 10px; }
+.ib-title { font-size: 13px; font-weight: 700; margin: 10px 0 4px; }
+.ib-title.bad { color: #e23b3b; } .ib-title.warn { color: #b26a00; } .ib-title.ok { color: #1c7a40; }
+.ib { font-size: 13px; line-height: 1.6; padding: 2px 0; }
+.ib.bad { color: #c62828; } .ib.warn { color: #8a5a00; }
+.issue-preview-wrap { margin-top: 12px; border-top: 1px dashed var(--line, #e2e7ef); padding-top: 10px; }
+.issue-preview-wrap summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.pv-note { font-size: 12px; color: var(--muted, #6b7686); margin: 6px 0 8px; }
+.issue-preview { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.issue-preview .pv-loading { font-size: 13px; color: var(--muted, #6b7686); padding: 12px; }
+.pv-page { position: relative; background: #fff; box-shadow: 0 1px 4px rgba(20,30,50,.12); line-height: 0; }
+.pv-page canvas { display: block; }
+.pv-val { position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #15203a; overflow: hidden; white-space: nowrap; padding: 0 2px; }
+.issue-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--line, #e2e7ef); }
+.issue-foot .btn { min-height: 40px; }

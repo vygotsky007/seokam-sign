@@ -89,6 +89,7 @@ function renderBoxes() {
       if (f.page !== idx) return;
       const box = document.createElement('div');
       box.className = 'fb';
+      box.dataset.fid = f.id;
       box.style.left = (f.x * pg.w) + 'px'; box.style.top = (f.y * pg.h) + 'px';
       box.style.width = (f.w * pg.w) + 'px'; box.style.height = (f.h * pg.h) + 'px';
       paintBox(box, f, i);
@@ -119,10 +120,10 @@ function paintBox(box, f, i) {
 function onBoxTap(f) {
   if (f.type === 'checkbox') {
     state.values[f.id] = !(state.values[f.id] === true);
-    afterChange();
+    afterChange(f);
   } else if (f.type === 'radio') {
     state.values[f.grp] = f.id; // 같은 그룹 자동 택1
-    afterChange();
+    afterChange(f);
   } else if (f.type === 'signature') {
     openSignSheet(f);
   } else { // text / confirm / date(manual)
@@ -131,7 +132,31 @@ function onBoxTap(f) {
   }
 }
 
-function afterChange() { renderBoxes(); revalidate(); }
+function afterChange(changed) {
+  renderBoxes(); revalidate();
+  // 방금 작성한 필드가 채워졌으면 다음 미작성 필수 필드로 자동 이동.
+  if (changed && isFilled(changed)) {
+    const nx = firstUnfilledRequired();
+    if (nx && nx.id !== changed.id) focusField(nx);
+  }
+}
+
+// 문서 순서(sort) 기준 첫 미작성 필수 필드
+function firstUnfilledRequired() {
+  return state.fields.filter(f => f.required).find(f => !isFilled(f)) || null;
+}
+// 해당 필드 박스로 스크롤 + 강조 테두리
+function focusField(f) {
+  const pg = state.pages[f.page];
+  if (!pg) return;
+  const box = pg.ov.querySelector(`.fb[data-fid="${f.id}"]`);
+  if (!box) return;
+  box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  box.classList.remove('flash');
+  void box.offsetWidth; // reflow 로 애니메이션 재생 보장
+  box.classList.add('flash');
+  setTimeout(() => box.classList.remove('flash'), 1500);
+}
 
 // ---- 바텀시트: 텍스트/날짜 ----
 function openTextSheet(f) {
@@ -154,7 +179,7 @@ function openTextSheet(f) {
     else { el.className = 'match no'; el.textContent = '아직 문구와 다릅니다'; }
   });
   document.getElementById('sheetCancel').onclick = closeSheet;
-  document.getElementById('sheetOk').onclick = () => { state.values[f.id] = input.value; closeSheet(); afterChange(); };
+  document.getElementById('sheetOk').onclick = () => { state.values[f.id] = input.value; closeSheet(); afterChange(f); };
 }
 
 // ---- 바텀시트: 서명 ----
@@ -191,7 +216,7 @@ function openSignSheet(f) {
   document.getElementById('sheetOk').onclick = () => {
     if (!dirty) { delete state.sigData[f.id]; }
     else { const out = document.createElement('canvas'); const maxW = 600; const sc = Math.min(1, maxW / cssW); out.width = Math.round(cssW * sc); out.height = Math.round(cssH * sc); out.getContext('2d').drawImage(canvas, 0, 0, out.width, out.height); const data = out.toDataURL('image/png'); state.sigData[f.id] = data; state.lastSig = data; }
-    closeSheet(); afterChange();
+    closeSheet(); afterChange(f);
   };
 }
 
@@ -211,13 +236,32 @@ function isFilled(f) {
 }
 function revalidate() {
   const reqFields = state.fields.filter(f => f.required);
-  const remaining = reqFields.filter(f => !isFilled(f)).length;
-  const ok = remaining === 0;
-  document.getElementById('submitBtn').disabled = !ok;
+  const total = reqFields.length;
+  const done = reqFields.filter(f => isFilled(f)).length;
+  const ok = done >= total;
+  const submitBtn = document.getElementById('submitBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const fill = document.getElementById('progFill');
+  if (fill) fill.style.width = (total ? Math.round((done / total) * 100) : 100) + '%';
   const hint = document.getElementById('barHint');
-  if (ok) { hint.className = 'left ok'; hint.textContent = '확인 후 서명 완료를 눌러주세요'; }
-  else { hint.className = 'left req'; hint.textContent = `남은 필수 ${remaining}개`; }
+  if (ok) {
+    // 전부 완료 → 바가 "서명 완료" 버튼으로 전환
+    if (nextBtn) nextBtn.classList.add('hidden');
+    if (submitBtn) { submitBtn.classList.remove('hidden'); submitBtn.disabled = false; }
+    if (hint) { hint.className = 'left ok'; hint.textContent = total ? `필수 ${done}/${total} · 확인 후 제출하세요` : '확인 후 제출하세요'; }
+  } else {
+    if (submitBtn) { submitBtn.classList.add('hidden'); submitBtn.disabled = true; }
+    if (nextBtn) nextBtn.classList.remove('hidden');
+    if (hint) { hint.className = 'left req'; hint.textContent = `필수 ${done}/${total}`; }
+  }
 }
+
+// "다음 빈칸" → 첫 미작성 필수 필드로 이동
+document.getElementById('nextBtn').addEventListener('click', () => {
+  const nx = firstUnfilledRequired();
+  if (nx) focusField(nx);
+  else toast('필수 항목을 모두 작성했어요');
+});
 
 // ---- 제출 ----
 document.getElementById('submitBtn').addEventListener('click', async () => {

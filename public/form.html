@@ -30,10 +30,18 @@
     .fb.opt .pin { background:#9aa6ba; } .fb.done .pin { background:var(--done); }
     .bar { position:fixed; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line); padding:11px 12px; z-index:30; }
     .bar .inner { max-width:460px; margin:0 auto; display:flex; align-items:center; gap:10px; }
-    .bar .left { flex:1; font-size:12.5px; }
+    .bar .prog { flex:1; min-width:0; }
+    .bar .prog-track { height:7px; border-radius:999px; background:#e6ebf3; overflow:hidden; margin-bottom:5px; }
+    .bar .prog-fill { height:100%; width:0%; background:var(--brand); border-radius:999px; transition:width .25s ease; }
+    .bar .left { font-size:12.5px; }
     .bar .left.req { color:var(--req); } .bar .left.ok { color:var(--ok); }
-    .submit { height:46px; border:none; border-radius:11px; font-size:15px; font-weight:600; color:#fff; background:var(--brand); padding:0 22px; }
+    .submit { height:46px; border:none; border-radius:11px; font-size:15px; font-weight:600; color:#fff; background:var(--brand); padding:0 20px; flex:none; }
+    .submit.nav { background:#3b4a63; }
     .submit:disabled { background:#aebfdc; }
+    .submit.hidden, .nav.hidden { display:none; }
+    /* 다음 빈칸 강조 테두리 */
+    .fb.flash { animation:fbflash 1.4s ease; }
+    @keyframes fbflash { 0%,100%{ box-shadow:0 0 0 0 rgba(47,109,244,0); } 20%{ box-shadow:0 0 0 4px rgba(47,109,244,.55); } 60%{ box-shadow:0 0 0 4px rgba(47,109,244,.35); } }
     /* 모달(바텀시트) */
     .sheet-bg { position:fixed; inset:0; background:rgba(20,30,50,.45); z-index:40; display:none; align-items:flex-end; justify-content:center; }
     .sheet-bg.show { display:flex; }
@@ -82,8 +90,12 @@
 
   <div id="bar" class="bar hidden">
     <div class="inner">
-      <span id="barHint" class="left req">남은 필수 항목을 확인하세요</span>
-      <button id="submitBtn" class="submit" disabled>서명 완료</button>
+      <div class="prog">
+        <div class="prog-track"><div id="progFill" class="prog-fill"></div></div>
+        <span id="barHint" class="left req">남은 필수 항목을 확인하세요</span>
+      </div>
+      <button id="nextBtn" class="submit nav" type="button">다음 빈칸 ↓</button>
+      <button id="submitBtn" class="submit hidden" disabled>서명 완료</button>
     </div>
   </div>
 

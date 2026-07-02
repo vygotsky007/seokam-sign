@@ -26,6 +26,28 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const ANON_KEY = process.env.SUPABASE_KEY || '';
 const BUCKET = 'sign-docs';
 
+// 관리자 PIN(선택). 설정 시 제출현황 이름을 '부분 마스킹(박○영)'으로 보려면 PIN 필요.
+// 미설정이면 단일 신뢰 배포로 간주해 기존처럼 부분 마스킹을 그대로 노출(비회귀).
+const ADMIN_PIN = (process.env.ADMIN_PIN || '').toString().trim();
+// 성만 노출(비인증): 박○○
+function maskNameFull(s) {
+  const a = [...(s || '').toString().trim()];
+  if (a.length <= 1) return a.join('');
+  return a[0] + '○'.repeat(a.length - 1);
+}
+// 성+이름끝 노출(인증): 박○영
+function maskNamePartial(s) {
+  const a = [...(s || '').toString().trim()];
+  if (a.length <= 1) return a.join('');
+  if (a.length === 2) return a[0] + '○';
+  return a[0] + '○'.repeat(a.length - 2) + a[a.length - 1];
+}
+function isAdminAuthed(req) {
+  if (!ADMIN_PIN) return true; // PIN 미설정 = 신뢰 배포(기존 동작 유지)
+  const p = (req.query.pin || req.headers['x-admin-pin'] || '').toString().trim();
+  return !!p && p === ADMIN_PIN;
+}
+
 let supa = null; // 서비스 롤 클라이언트
 const USE_SUPABASE = Boolean(SUPABASE_URL && SERVICE_KEY);
 
@@ -201,6 +223,12 @@ app.post('/api/documents/:id/fields', async (req, res) => {
       grp: (f.grp == null ? null : f.grp.toString().slice(0, 100)),
       sort: Number.isFinite(f.sort) ? f.sort : i,
     }));
+
+    // 따라쓰기(confirm) 필드는 문구(정답)가 비어 있으면 저장 불가.
+    const emptyConfirm = clean.find((f) => f.type === 'confirm' && !(f.answer || '').toString().trim());
+    if (emptyConfirm) {
+      return res.status(400).json({ error: `따라쓰기 필드 "${emptyConfirm.label || '(제목 없음)'}"의 문구를 입력해 주세요.`, field_id: emptyConfirm.id });
+    }
 
     if (USE_SUPABASE) {
       const { error: delErr } = await supa.from('fields').delete().eq('doc_id', docId);
@@ -606,12 +634,20 @@ app.post('/api/f/:token', async (req, res) => {
       id: bundle.response ? bundle.response.id : crypto.randomUUID(),
       link_id: bundle.link.id, token, values,
       signature_path: primarySig, submit_ip: clientIp, submitted_at: new Date().toISOString(),
+      // 제출 시점 필드 배치 스냅샷 — 이후 교사가 문서를 수정해도 이 제출본은 그대로 보존.
+      fields_snapshot: fields,
+      doc_title: bundle.doc ? bundle.doc.title : null,
     };
 
     // 링크당 1건: 삭제 후 삽입 (재작성=덮어쓰기)
     if (USE_SUPABASE) {
       await supa.from('sign_responses').delete().eq('link_id', bundle.link.id);
-      const { error } = await supa.from('sign_responses').insert(row);
+      let { error } = await supa.from('sign_responses').insert(row);
+      // 스냅샷 컬럼 마이그레이션(schema_stage5.sql) 미적용 시에도 제출은 성공하도록 폴백.
+      if (error && /fields_snapshot|doc_title|column/i.test(error.message || '')) {
+        const { fields_snapshot, doc_title, ...legacy } = row;
+        ({ error } = await supa.from('sign_responses').insert(legacy));
+      }
       if (error) throw error;
       if (bundle.link.one_time) await supa.from('sign_links').update({ is_closed: true }).eq('id', bundle.link.id);
     } else {
@@ -706,6 +742,8 @@ app.get('/api/documents/:id/submissions', async (req, res) => {
     if (!doc) return res.status(404).json({ error: '문서 없음' });
     const nfid = nameFieldId(fields);
     const rmap = new Map(responses.map((r) => [r.link_id, r]));
+    const authed = isAdminAuthed(req);
+    const maskFn = authed ? maskNamePartial : maskNameFull; // 인증: 박○영 / 비인증: 박○○
     const now = Date.now();
     const rows = links.map((l) => {
       const r = rmap.get(l.id);
@@ -714,7 +752,7 @@ app.get('/api/documents/:id/submissions', async (req, res) => {
       return {
         link_id: l.id, seq: l.seq, token: l.token,
         done: !!r,
-        name: r && nfid ? maskName((r.values || {})[nfid]) : null,
+        name: r && nfid ? maskFn((r.values || {})[nfid]) : null,
         submitted_at: r ? r.submitted_at : null,
         status,
       };
@@ -723,6 +761,8 @@ app.get('/api/documents/:id/submissions', async (req, res) => {
       title: doc.title,
       total: links.length,
       done: rows.filter((x) => x.done).length,
+      authed,                    // 부분 마스킹 표시 중 여부
+      pin_required: !!ADMIN_PIN, // PIN 게이트가 설정돼 있는지(비인증 시 UI에서 입력 유도)
       rows,
     });
   } catch (e) {
@@ -739,9 +779,11 @@ app.get('/api/links/:linkId/merged.pdf', async (req, res) => {
     if (USE_SUPABASE) { const { data } = await supa.from('sign_links').select('*').eq('id', linkId).single(); link = data; }
     else { link = readLocalDB().links.find((x) => x.id === linkId); }
     if (!link) return res.status(404).json({ error: '링크 없음' });
-    const { doc, fields, responses } = await getDocFull(link.doc_id);
+    const { doc, fields: liveFields, responses } = await getDocFull(link.doc_id);
     const resp = responses.find((r) => r.link_id === linkId);
     if (!resp) return res.status(404).json({ error: '아직 작성되지 않았습니다.' });
+    // 제출 당시 스냅샷이 있으면 그것으로 렌더(발급 후 문서 수정과 무관하게 제출본 보존).
+    const fields = Array.isArray(resp.fields_snapshot) && resp.fields_snapshot.length ? resp.fields_snapshot : liveFields;
 
     const pdfBytes = await getPdfBytes(doc);
     const sigBuffers = {};
@@ -767,14 +809,14 @@ app.get('/api/links/:linkId/merged.pdf', async (req, res) => {
 // 작성분 일괄 ZIP
 app.get('/api/documents/:id/merged.zip', async (req, res) => {
   try {
-    const { doc, fields, links, responses } = await getDocFull(req.params.id);
+    const { doc, fields: liveFields, links, responses } = await getDocFull(req.params.id);
     if (!doc) return res.status(404).json({ error: '문서 없음' });
     const rmap = new Map(responses.map((r) => [r.link_id, r]));
     const done = links.filter((l) => rmap.has(l.id));
     if (!done.length) return res.status(404).json({ error: '작성된 문서가 없습니다.' });
 
     const pdfBytes = await getPdfBytes(doc);
-    const nfid = nameFieldId(fields);
+    const nfid = nameFieldId(liveFields);
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(doc.title + '_작성분.zip')}`);
     const archive = archiver('zip', { zlib: { level: 9 } });
@@ -783,6 +825,8 @@ app.get('/api/documents/:id/merged.zip', async (req, res) => {
 
     for (const l of done) {
       const resp = rmap.get(l.id);
+      // 제출 스냅샷 우선(보존), 없으면 라이브 필드.
+      const fields = Array.isArray(resp.fields_snapshot) && resp.fields_snapshot.length ? resp.fields_snapshot : liveFields;
       const sigBuffers = {};
       for (const f of fields) {
         if (f.type === 'signature') { const b = await getSigBytes((resp.values || {})[f.id]); if (b) sigBuffers[f.id] = b; }

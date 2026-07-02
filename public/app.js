@@ -40,7 +40,12 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'f-' + Math.random(
 function enableLinksBtn(docId) {
   const b = document.getElementById('linksBtn');
   b.disabled = false;
-  b.onclick = () => { location.href = `/links.html?doc=${docId}`; };
+  // 링크 만들기 = ① 자동 저장 → ② 발급 전 확인 모달 → ③ 발급 화면
+  b.onclick = async () => {
+    const ok = await saveAll({ silent: true, skipIssuedNotice: true });
+    if (!ok) return; // 저장 실패(예: 따라쓰기 문구 미입력)면 중단
+    openIssueModal();
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -414,8 +419,16 @@ function escapeHtml(s) { return (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;
 // ---------------------------------------------------------------------------
 // 저장
 // ---------------------------------------------------------------------------
-document.getElementById('saveBtn').addEventListener('click', async () => {
-  if (!state.docId) { toast('먼저 PDF를 업로드하세요.'); return; }
+// 따라쓰기(confirm) 문구가 비어 있는 첫 필드 (있으면 저장 불가)
+function firstEmptyConfirm() {
+  return state.fields.find(f => f.type === 'confirm' && !((f.answer || '').toString().trim()));
+}
+
+// 저장 통합 로직 — 저장 버튼과 "링크 만들기(자동 저장)"가 함께 사용.
+async function saveAll(opts = {}) {
+  if (!state.docId) { toast('먼저 PDF를 업로드하세요.'); return false; }
+  const bad = firstEmptyConfirm();
+  if (bad) { toast('따라쓰기 필드의 문구를 입력해야 저장돼요.'); openEditor(bad.id); return false; }
   const payload = {
     fields: state.fields.map((f, i) => ({
       id: f.id, page: f.page, x: f.x, y: f.y, w: f.w, h: f.h,
@@ -430,13 +443,115 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '저장 실패');
-    // 남길 말 저장
     await fetch(`/api/documents/${state.docId}/meta`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ memo: document.getElementById('memo').value }),
     });
-    toast(`저장 완료 · 필드 ${data.count}개`);
-  } catch (e) { toast('오류: ' + e.message); }
+    if (!opts.silent) {
+      // 발급 후 수정 정책 안내: 발급 링크가 있으면 함께 알림.
+      let issued = 0;
+      if (!opts.skipIssuedNotice) {
+        try { const lr = await fetch(`/api/documents/${state.docId}/links`); const lj = await lr.json(); issued = (lj.links || []).length; } catch {}
+      }
+      toast(issued > 0
+        ? `저장 완료 · 필드 ${data.count}개 · 발급 링크 ${issued}개 있음 — 미작성자에게는 수정본이 보입니다`
+        : `저장 완료 · 필드 ${data.count}개`);
+    }
+    return true;
+  } catch (e) { toast('오류: ' + e.message); return false; }
+}
+
+document.getElementById('saveBtn').addEventListener('click', () => saveAll());
+
+// ---------------------------------------------------------------------------
+// 발급 전 검증 + 확인 모달 + 최종 미리보기
+// ---------------------------------------------------------------------------
+function validateForIssue() {
+  const blocks = [], warns = [];
+  const fieldCount = state.fields.length;
+  const requiredCount = state.fields.filter(f => f.required).length;
+  if (fieldCount === 0) blocks.push('필드가 없습니다. 최소 1개 이상 추가하세요.');
+  state.fields.filter(f => f.type === 'confirm' && !((f.answer || '').toString().trim()))
+    .forEach(f => blocks.push(`따라쓰기 "${f.label || '(제목 없음)'}"의 문구가 비어 있어요.`));
+  const grpCount = {};
+  state.fields.filter(f => f.type === 'radio').forEach(f => {
+    const g = (f.grp || '(그룹 미지정)'); grpCount[g] = (grpCount[g] || 0) + 1;
+  });
+  Object.entries(grpCount).forEach(([g, c]) => {
+    if (c < 2) blocks.push(`선택 그룹 "${g}"에 선택지가 1개뿐이에요. (택1은 2개 이상 필요)`);
+  });
+  if (requiredCount === 0) warns.push('필수로 지정된 항목이 하나도 없어요. 이대로 발급하면 빈 제출도 가능합니다.');
+  return { fieldCount, requiredCount, blocks, warns };
+}
+
+async function renderIssuePreview(container) {
+  container.innerHTML = '<div class="pv-loading">미리보기 준비 중…</div>';
+  if (!state.pdfDoc) { container.innerHTML = '<div class="pv-loading">PDF가 없어 미리보기를 만들 수 없어요.</div>'; return; }
+  container.innerHTML = '';
+  const p = n => String(n).padStart(2, '0');
+  const d = new Date();
+  const todayS = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const sampleGrp = {}; // 그룹별 첫 옵션만 선택 표시
+  state.fields.filter(f => f.type === 'radio').forEach(f => { const g = f.grp || ''; if (!(g in sampleGrp)) sampleGrp[g] = f.id; });
+  for (let pi = 1; pi <= state.pdfDoc.numPages; pi++) {
+    const page = await state.pdfDoc.getPage(pi);
+    const base = page.getViewport({ scale: 1 });
+    const targetW = Math.min(340, (container.clientWidth || 340));
+    const scale = targetW / base.width;
+    const vp = page.getViewport({ scale });
+    const dpr = window.devicePixelRatio || 1;
+    const wrap = document.createElement('div'); wrap.className = 'pv-page';
+    wrap.style.width = vp.width + 'px'; wrap.style.height = vp.height + 'px';
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(vp.width * dpr); canvas.height = Math.floor(vp.height * dpr);
+    canvas.style.width = vp.width + 'px'; canvas.style.height = vp.height + 'px';
+    const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
+    wrap.appendChild(canvas); container.appendChild(wrap);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    state.fields.filter(f => f.page === pi - 1).forEach(f => {
+      const el = document.createElement('div'); el.className = 'pv-val';
+      el.style.left = (f.x * vp.width) + 'px'; el.style.top = (f.y * vp.height) + 'px';
+      el.style.width = (f.w * vp.width) + 'px'; el.style.height = (f.h * vp.height) + 'px';
+      let txt = '';
+      if (f.type === 'text') txt = '홍길동';
+      else if (f.type === 'confirm') txt = f.answer || '(문구)';
+      else if (f.type === 'checkbox') txt = '✓';
+      else if (f.type === 'signature') txt = '(서명)';
+      else if (f.type === 'date') txt = todayS;
+      else if (f.type === 'radio') txt = (sampleGrp[f.grp || ''] === f.id) ? '●' : '○';
+      el.textContent = txt;
+      wrap.appendChild(el);
+    });
+  }
+}
+
+function openIssueModal() {
+  const v = validateForIssue();
+  document.getElementById('issueSummary').innerHTML = `필드 <b>${v.fieldCount}</b>개 · 필수 <b>${v.requiredCount}</b>개`;
+  const blocksEl = document.getElementById('issueBlocks');
+  blocksEl.innerHTML = v.blocks.length
+    ? '<div class="ib-title bad">🚫 발급 전 수정이 필요해요</div>' + v.blocks.map(b => `<div class="ib bad">• ${escapeHtml(b)}</div>`).join('')
+    : '<div class="ib-title ok">✓ 발급 가능한 상태예요</div>';
+  const warnsEl = document.getElementById('issueWarns');
+  warnsEl.innerHTML = v.warns.length
+    ? '<div class="ib-title warn">⚠ 확인만 해주세요</div>' + v.warns.map(w => `<div class="ib warn">• ${escapeHtml(w)}</div>`).join('')
+    : '';
+  const go = document.getElementById('issueGo');
+  const fix = document.getElementById('issueFix');
+  if (v.blocks.length) { go.disabled = true; fix.classList.remove('hidden'); }
+  else { go.disabled = false; fix.classList.add('hidden'); }
+  document.getElementById('issueModal').classList.remove('hidden');
+  renderIssuePreview(document.getElementById('issuePreview'));
+}
+function closeIssueModal() { document.getElementById('issueModal').classList.add('hidden'); }
+document.getElementById('issueClose').addEventListener('click', closeIssueModal);
+document.getElementById('issueFix').addEventListener('click', closeIssueModal);
+document.getElementById('issueGo').addEventListener('click', () => {
+  if (!state.docId) return;
+  location.href = `/links.html?doc=${state.docId}`;
+});
+document.getElementById('issueModal').addEventListener('click', (e) => {
+  if (e.target.id === 'issueModal') closeIssueModal();
 });
 
 // ---------------------------------------------------------------------------

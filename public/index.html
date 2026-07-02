@@ -111,6 +111,30 @@
     </div>
   </div>
 
+  <!-- 발급 전 확인 모달 -->
+  <div id="issueModal" class="issue-mask hidden">
+    <div class="issue-box">
+      <div class="issue-head">
+        <h2>발급 전 확인</h2>
+        <button id="issueClose" class="btn" aria-label="닫기">×</button>
+      </div>
+      <div class="issue-body">
+        <div id="issueSummary" class="issue-summary"></div>
+        <div id="issueBlocks" class="issue-blocks"></div>
+        <div id="issueWarns" class="issue-warns"></div>
+        <details class="issue-preview-wrap" open>
+          <summary>👀 최종 모습 미리보기 (샘플 값)</summary>
+          <div class="pv-note">빨간 편집 박스 없이 예시 값을 얹어 보여줍니다. 문서 글자와 겹치지 않는지 확인하세요.</div>
+          <div id="issuePreview" class="issue-preview"></div>
+        </details>
+      </div>
+      <div class="issue-foot">
+        <button id="issueFix" class="btn hidden">← 수정하러 가기</button>
+        <button id="issueGo" class="btn btn-primary">발급 화면으로 →</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
